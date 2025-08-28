@@ -1,39 +1,38 @@
 import express from "express";
 
 const app = express();
+app.use(express.json()); // permite receber JSON no body
 
-// Endpoint SSE que o MCP/cliente vai consumir
+// Lista de conexões SSE ativas
+const clients = [];
+
+// Endpoint SSE
 app.get("/mcp/sse", (req, res) => {
-  // cabeçalhos obrigatórios para SSE
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-
-  // envia cabeçalhos imediatamente
   res.flushHeaders?.();
 
-  // ping periódico para manter a conexão viva
-  const keepAlive = setInterval(() => {
-    res.write(":keepalive\n\n"); // comentário SSE
-  }, 15000);
+  // adiciona este cliente à lista
+  clients.push(res);
 
-  // exemplo: manda um evento simples a cada 5s
-  let i = 0;
-  const ticker = setInterval(() => {
-    res.write("event: message\n");
-    res.write(`data: {"count": ${i++}}\n\n`);
-  }, 5000);
-
-  // quando o cliente fecha a conexão
+  // remove cliente quando fecha conexão
   req.on("close", () => {
-    clearInterval(keepAlive);
-    clearInterval(ticker);
-    res.end();
+    const i = clients.indexOf(res);
+    if (i >= 0) clients.splice(i, 1);
   });
 });
 
-// rota simples de saúde
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+// Endpoint para o n8n mandar eventos
+app.post("/mcp/event", (req, res) => {
+  const event = req.body;
+  // envia para todos os clientes conectados
+  clients.forEach((client) => {
+    client.write(`event: message\n`);
+    client.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
+  res.status(200).send({ delivered: clients.length });
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
